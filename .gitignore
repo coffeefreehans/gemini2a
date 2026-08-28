@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+chrome-profile/
+browser-profile/
+.env
+build/
+dist/
+*.log
+login-backup.json
+*.spec

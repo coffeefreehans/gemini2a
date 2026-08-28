@@ -1,0 +1,4 @@
+fastapi>=0.111
+uvicorn>=0.30
+playwright>=1.46
+pycryptodome>=3.20

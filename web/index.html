@@ -1,0 +1,804 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>gemini2a · Gemini 网页桥接控制台</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --bg-panel: #161b22;
+    --bg-hover: #1c2330;
+    --border: #2b3444;
+    --text: #e6edf3;
+    --text-dim: #8b949e;
+    --accent: #4f8ff7;
+    --accent-dim: #26406e;
+    --green: #3fb950;
+    --yellow: #d29922;
+    --red: #f85149;
+    --radius: 12px;
+    font-size: 15px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* ---------- 头部 ---------- */
+  header {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 12px 20px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-panel);
+    flex-shrink: 0;
+  }
+  .logo {
+    font-weight: 700;
+    font-size: 17px;
+    letter-spacing: .5px;
+  }
+  .logo span { color: var(--accent); }
+  .chip {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 4px 12px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    font-size: 13px;
+    color: var(--text-dim);
+  }
+  .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--text-dim);
+  }
+  .dot.ok   { background: var(--green); box-shadow: 0 0 6px var(--green); }
+  .dot.warn { background: var(--yellow); box-shadow: 0 0 6px var(--yellow); }
+  .dot.bad  { background: var(--red); box-shadow: 0 0 6px var(--red); animation: blink 1s infinite; }
+  @keyframes blink { 50% { opacity: .35; } }
+  header .spacer { flex: 1; }
+  header a.doc {
+    color: var(--text-dim);
+    text-decoration: none;
+    font-size: 13px;
+    border: 1px solid var(--border);
+    padding: 5px 12px;
+    border-radius: 8px;
+  }
+  header a.doc:hover { color: var(--accent); border-color: var(--accent); }
+  .svc-btn {
+    border: none; border-radius: 8px; padding: 6px 14px;
+    font-size: 13px; font-weight: 600; cursor: pointer; margin-right: 10px;
+  }
+  .svc-btn.stop { background: #238636; color: #fff; }
+  .svc-btn.stop:hover { background: #2ea043; }
+  .svc-btn.start { background: var(--accent); color: #fff; }
+  .svc-btn.start:hover { filter: brightness(1.12); }
+
+  main {
+    flex: 1;
+    display: flex;
+    min-height: 0;
+  }
+
+  #toast {
+    position: fixed; bottom: 26px; left: 50%; transform: translateX(-50%);
+    background: #1f6feb; color: #fff; padding: 9px 22px; border-radius: 10px;
+    font-size: 13.5px; display: none; z-index: 99; box-shadow: 0 6px 24px #0008;
+  }
+
+  /* ---------- 侧栏 ---------- */
+  aside {
+    width: 300px;
+    flex-shrink: 0;
+    border-right: 1px solid var(--border);
+    background: var(--bg-panel);
+    overflow-y: auto;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  aside h3 {
+    font-size: 13px;
+    color: var(--text-dim);
+    margin-bottom: 10px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+  .card {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 12px;
+    background: var(--bg);
+  }
+  .kv { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+  .kv label { color: var(--text-dim); font-size: 12.5px; width: 64px; flex-shrink: 0; }
+  .kv code, .kv input {
+    flex: 1;
+    font-family: Consolas, monospace;
+    font-size: 12.5px;
+    color: var(--text);
+    background: var(--bg-hover);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 5px 8px;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .copy-btn {
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-dim);
+    border-radius: 6px;
+    cursor: pointer;
+    padding: 4px 8px;
+    font-size: 12px;
+    flex-shrink: 0;
+  }
+  .copy-btn:hover { color: var(--accent); border-color: var(--accent); }
+  input.pin {
+    flex: 1; min-width: 0;
+    background: #10161f; color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px;
+    padding: 5px 8px; font-family: Consolas, monospace; font-size: 12.5px;
+  }
+  input.pin:focus { outline: none; border-color: var(--accent); }
+  .apply-btn {
+    width: 100%; margin-top: 8px;
+    background: var(--accent); color: #fff; border: none;
+    border-radius: 8px; padding: 8px 0; font-size: 13.5px; font-weight: 600;
+    cursor: pointer;
+  }
+  .apply-btn:hover { filter: brightness(1.12); }
+  #sess-strip {
+    display: flex; gap: 8px; overflow-x: auto;
+    padding: 10px 16px; border-bottom: 1px solid var(--border);
+    background: var(--bg-panel); flex-shrink: 0;
+  }
+  #sess-strip:empty::after { content: "会话列表加载中…"; color: var(--text-dim); font-size: 12.5px; }
+  .sess-chip {
+    flex-shrink: 0; max-width: 220px;
+    padding: 6px 14px; border-radius: 999px; cursor: pointer;
+    border: 1px solid var(--border); background: var(--bg);
+    color: var(--text-dim); font-size: 13px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .sess-chip:hover { color: var(--text); border-color: var(--accent); }
+  .sess-chip.active {
+    color: var(--accent); border-color: var(--accent);
+    background: var(--accent-dim); font-weight: 600;
+  }
+  .status-row { display: flex; justify-content: space-between; padding: 5px 0; font-size: 13px; }
+  .status-row .k { color: var(--text-dim); }
+  aside .tip {
+    font-size: 12.5px;
+    color: var(--text-dim);
+    line-height: 1.65;
+  }
+  aside .tip b { color: var(--text); }
+
+  /* ---------- 聊天区 ---------- */
+  .chat-col {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+  .sys-bar {
+    padding: 8px 18px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: var(--bg-panel);
+    flex-shrink: 0;
+  }
+  .sys-bar label { font-size: 13px; color: var(--text-dim); flex-shrink: 0; }
+  .sys-bar input {
+    flex: 1;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    padding: 6px 10px;
+    font-size: 13.5px;
+  }
+  .sys-bar input:focus { outline: none; border-color: var(--accent); }
+
+  #messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    scroll-behavior: smooth;
+  }
+  .msg { display: flex; gap: 12px; max-width: 88%; }
+  .msg.user { align-self: flex-end; flex-direction: row-reverse; }
+  .avatar {
+    width: 32px; height: 32px;
+    border-radius: 9px;
+    flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 15px; font-weight: 600;
+  }
+  .msg.ai .avatar { background: var(--accent-dim); color: #9ec3ff; }
+  .msg.user .avatar { background: #2b3b2f; color: #7ee2a8; }
+  .bubble {
+    padding: 11px 15px;
+    border-radius: var(--radius);
+    font-size: 14.5px;
+    line-height: 1.7;
+    white-space: pre-wrap;
+    word-break: break-word;
+    min-width: 40px;
+  }
+  .msg.ai .bubble { background: var(--bg-panel); border: 1px solid var(--border); border-top-left-radius: 4px; }
+  .msg.user .bubble { background: #1d2d45; border: 1px solid #2c4770; border-top-right-radius: 4px; }
+  .bubble.error { background: #331b1d; border-color: #6e2a2e; color: #ffb3b6; }
+  .cursor-blink::after {
+    content: "▍";
+    color: var(--accent);
+    animation: blink 1s infinite;
+  }
+  .welcome {
+    margin: auto;
+    text-align: center;
+    color: var(--text-dim);
+    line-height: 2;
+  }
+  .welcome .big { font-size: 26px; }
+
+  /* ---------- 输入区 ---------- */
+  .composer-wrap {
+    padding: 14px 24px 18px;
+    border-top: 1px solid var(--border);
+    background: var(--bg-panel);
+    flex-shrink: 0;
+  }
+  .composer {
+    display: flex;
+    gap: 10px;
+    align-items: flex-end;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 10px 12px;
+  }
+  .composer:focus-within { border-color: var(--accent); }
+  textarea#input {
+    flex: 1;
+    background: transparent;
+    border: none;
+    resize: none;
+    color: var(--text);
+    font-family: inherit;
+    font-size: 14.5px;
+    line-height: 1.55;
+    max-height: 160px;
+    outline: none;
+  }
+  button.send {
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 9px;
+    padding: 8px 20px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+  button.send:hover { filter: brightness(1.12); }
+  button.send:disabled { opacity: .45; cursor: not-allowed; }
+  button.send.stop { background: var(--red); }
+  .composer-meta {
+    display: flex;
+    gap: 16px;
+    margin-top: 8px;
+    font-size: 12px;
+    color: var(--text-dim);
+    padding: 0 4px;
+  }
+  .clear-btn {
+    margin-left: auto;
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    cursor: pointer;
+    font-size: 12px;
+  }
+  .clear-btn:hover { color: var(--red); }
+
+  ::-webkit-scrollbar { width: 9px; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 9px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+
+  @media (max-width: 900px) { aside { display: none; } }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">gemini<span>2a</span></div>
+  <div style="color:var(--text-dim);font-size:13px">Gemini 网页版 → OpenAI 兼容接口</div>
+  <div class="spacer"></div>
+  <button id="svc-btn" class="svc-btn stop" onclick="toggleService()" style="display:none">⏹ 停止服务</button>
+  <div class="chip"><span class="dot" id="dot"></span><span id="status-text">检测中…</span></div>
+  <a class="doc" href="/docs" target="_blank">API 文档</a>
+</header>
+
+<div id="toast"></div>
+
+<main>
+  <aside>
+    <div>
+      <h3>Agent 接入参数</h3>
+      <div class="card">
+        <div class="kv"><label>Base URL</label><code id="baseurl"></code>
+          <button class="copy-btn" onclick="copyText(document.getElementById('baseurl').textContent)">复制</button></div>
+        <div class="kv"><label>端口</label>
+          <input id="p-port" class="pin" autocomplete="off"></div>
+        <div class="kv"><label>API Key</label>
+          <input id="p-key" class="pin" placeholder="留空=不启用鉴权" autocomplete="off"></div>
+        <div class="kv"><label>Model</label>
+          <input id="p-model" class="pin" autocomplete="off"></div>
+        <button class="apply-btn" onclick="applySettings()">应用设置</button>
+      </div>
+    </div>
+
+    <div>
+      <h3>运行状态</h3>
+      <div class="card">
+        <div class="status-row"><span class="k">浏览器</span><span id="st-browser">-</span></div>
+        <div class="status-row"><span class="k">输入模式</span><span id="st-typing">-</span></div>
+        <div class="status-row"><span class="k">本页地址</span><span id="st-origin" style="font-family:monospace;font-size:12px"></span></div>
+      </div>
+    </div>
+
+    <div>
+      <h3>说明</h3>
+      <div class="card tip">
+        本页面即一个可用客户端；接agent时用左侧三个参数。<br>
+        · 同一时刻仅处理一条请求，排队等待<br>
+        · 单次回复约 10~40 秒属正常<br>
+        · 对话历史由本页整体重发给网页版<br>
+        · 请勿高频调用，注意账号风控
+      </div>
+    </div>
+  </aside>
+
+  <section class="chat-col">
+    <div class="sys-bar">
+      <label>系统提示:</label>
+      <input id="sys-prompt" placeholder='例如：你是一个简洁专业的中文助手' />
+
+    </div>
+
+    <div id="sess-strip"><span class="sess-empty">会话列表加载中…</span></div>
+
+    <div id="messages">
+      <div class="welcome">
+        <div class="big">🌐➜✨</div>
+        <div>Gemini 网页桥接已就绪</div>
+        <div>在下方输入即可与 Gemini 网页版对话</div>
+      </div>
+    </div>
+
+    <div class="composer-wrap">
+      <div class="composer">
+        <textarea id="input" rows="1" placeholder="输入消息，Enter 发送 / Shift+Enter 换行"></textarea>
+        <button class="send" id="send-btn" onclick="onSend()">发送</button>
+      </div>
+      <div class="composer-meta">
+        <span>Enter 发送 · Shift+Enter 换行</span>
+        <button class="clear-btn" onclick="clearChat()">🗑 清空会话</button>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const msgBox = $("messages");
+let history = [];          // OpenAI 格式历史（发请求用）
+let busy = false;
+let aborter = null;
+let browserStarted = null; // 最近一次 /health 的浏览器状态
+
+// 合并时间线：网页端真实对话 + 本窗口待确认消息
+let webItems = [];
+let webSig = null;
+let renderSig = null;
+let pendingUsers = [];     // [{text}] 已从本窗口发出、尚未出现在网页端
+let liveAiText = null;     // 正在流式接收的回复
+let liveAiDone = false;
+
+const WELCOME = `
+  <div class="welcome">
+    <div class="big">🌐➜✨</div>
+    <div>Gemini 网页桥接已就绪</div>
+    <div>在下方输入即可与 Gemini 网页版对话；时间线与网页端保持同步</div>
+  </div>`;
+
+$("baseurl").textContent = location.origin + "/v1";
+$("st-origin").textContent = location.host;
+
+$("input").addEventListener("input", function () {
+  this.style.height = "auto";
+  this.style.height = Math.min(this.scrollHeight, 160) + "px";
+});
+
+// ---------- toast ----------
+let toastTimer = null;
+function toast(msg, ms = 2600) {
+  const el = document.getElementById("toast");
+  el.textContent = msg;
+  el.style.display = "block";
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.style.display = "none", ms);
+}
+
+// ---------- 状态轮询 ----------
+async function pollHealth() {
+  try {
+    const r = await fetch("/health");
+    const d = await r.json();
+    browserStarted = !!d.browser_started;
+    $("dot").className = "dot " + (browserStarted ? "ok" : "warn");
+    $("status-text").textContent = browserStarted ? "浏览器就绪" : "浏览器启动中";
+    $("st-browser").textContent = browserStarted ? "已启动 ✓" : "启动中…";
+    if (d.typing_mode) $("st-typing").textContent = d.typing_mode;
+  } catch {
+    browserStarted = false;
+    $("dot").className = "dot bad";
+    $("status-text").textContent = "服务离线";
+    $("st-browser").textContent = "离线";
+  }
+  refreshSvcBtn();
+}
+async function refreshSvcBtn() {
+  const b = document.getElementById("svc-btn");
+  if (!window.pywebview) { b.style.display = "none"; return; }
+  b.style.display = "inline-block";
+  let running = false;
+  try { running = (await window.pywebview.api.is_running()) === "1"; } catch {}
+  b.textContent = running ? "⏹ 停止服务" : "▶ 启动服务";
+  b.className = "svc-btn " + (running ? "stop" : "start");
+}
+pollHealth();
+setInterval(pollHealth, 4000);
+
+// ---------- 设置 ----------
+const nativeApi = () => (window.pywebview && window.pywebview.api) || null;
+
+async function loadSettings() {
+  try {
+    const r = await fetch("/settings");
+    const s = await r.json();
+    $("p-port").value = s.port;
+    $("p-key").value = s.api_key || "";
+    $("p-model").value = s.model || "gemini-web";
+  } catch {}
+}
+
+async function applySettings() {
+  const port = parseInt($("p-port").value.trim(), 10);
+  const key = $("p-key").value;
+  const model = $("p-model").value.trim() || "gemini-web";
+  if (!(port >= 1 && port <= 65535)) { toast("端口必须是 1~65535 的数字"); return; }
+
+  try {
+    const r = await fetch("/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ api_key: key.trim(), model }),
+    });
+    if (!r.ok) throw new Error("保存失败");
+  } catch (e) { toast("保存设置失败：" + e.message); return; }
+
+  const curPort = parseInt(location.port, 10) || 80;
+  const api = nativeApi();
+  if (api && port !== curPort) {
+    toast("正在切换端口到 " + port + " …");
+    try { await api.apply_port(String(port)); } catch {}
+    $("baseurl").textContent = "http://127.0.0.1:" + port + "/v1";
+    toast("已生效 ✓ 新地址 http://127.0.0.1:" + port + "/v1");
+  } else if (!api && port !== curPort) {
+    toast("端口修改已保存，重启程序后生效");
+  } else {
+    toast("已生效 ✓");
+  }
+}
+
+// ---------- 服务控制 ----------
+let svcBusy = false;
+async function toggleService() {
+  const api = nativeApi();
+  if (!api) { toast("网页模式下请在桌面窗口里控制服务"); return; }
+  if (svcBusy) return;
+  svcBusy = true;
+  try {
+    const running = (await api.is_running()) === "1";
+    if (running) { await api.stop_server(); toast("服务已停止"); }
+    else { await api.start_server(); toast("服务启动中…"); }
+  } catch (e) { toast("操作失败：" + e); }
+  svcBusy = false;
+  await pollHealth();
+}
+function copyText(t) {
+  navigator.clipboard.writeText(t).then(() => {}, () => {});
+}
+
+// ---------- 合并时间线渲染 ----------
+function escapeHtml(s) {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function appendBubble(role, text, extraClass) {
+  const wrap = document.createElement("div");
+  wrap.className = "msg " + (role === "user" ? "user" : "ai");
+  const av = document.createElement("div");
+  av.className = "avatar";
+  av.textContent = role === "user" ? "你" : "G";
+  const bub = document.createElement("div");
+  bub.className = "bubble " + (extraClass || "");
+  bub.textContent = text;
+  wrap.append(av, bub);
+  msgBox.appendChild(wrap);
+  return bub;
+}
+
+function renderFeed(force = false) {
+  const sig = webSig + "|" + (browserStarted ? "b" : "s") + "|" +
+    pendingUsers.map(p => p.text.length).join(",") + "|" +
+    (liveAiText === null ? "-" : (liveAiDone ? "D" : liveAiText.length));
+  if (!force && sig === renderSig) return;
+  renderSig = sig;
+
+  msgBox.innerHTML = "";
+  if (!webItems.length && !pendingUsers.length && liveAiText === null) {
+    if (browserStarted === false) {
+      msgBox.innerHTML = `<div class="welcome"><div class="big">⏸</div>
+        <div>服务已停止 · 点右上角“启动服务”恢复</div></div>`;
+    } else {
+      msgBox.innerHTML = WELCOME;
+    }
+    return;
+  }
+
+  if (!webItems.length) {
+    const meta = document.createElement("div");
+    meta.className = "welcome";
+    meta.textContent = "（网页端会话将随第一条消息创建）";
+    msgBox.appendChild(meta);
+  }
+  for (const it of webItems) {
+    appendBubble(it.role === "user" ? "user" : "ai", it.text);
+  }
+  for (const p of pendingUsers) {
+    appendBubble("user", p.text, "pending");
+  }
+  if (liveAiText !== null) {
+    const el = appendBubble("ai", liveAiText);
+    if (!liveAiDone) el.classList.add("cursor-blink");
+  }
+  msgBox.scrollTop = msgBox.scrollHeight;
+}
+
+function prunePending() {
+  if (!pendingUsers.length) return;
+  pendingUsers = pendingUsers.filter(p =>
+    !webItems.some(i => i.role === "user" && i.text.trim() === p.text.trim()));
+}
+
+// ---------- 网页端轮询（服务停止时绝不拉起浏览器） ----------
+async function pollWebFeed() {
+  if (browserStarted === false) {
+    if (webItems.length) { webItems = []; renderFeed(true); }
+    return;
+  }
+  try {
+    const r = await fetch("/web/history");
+    const d = await r.json();
+    if (d.idle) return;
+    webItems = d.items || [];
+    prunePending();
+    renderFeed();
+  } catch {}
+}
+setInterval(pollWebFeed, 3000);
+
+// ---------- 发送 / 流式 ----------
+$("input").addEventListener("keydown", e => {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); onSend(); }
+});
+
+function setBusy(v) {
+  busy = v;
+  const b = $("send-btn");
+  b.textContent = v ? "停止" : "发送";
+  b.classList.toggle("stop", v);
+}
+
+async function onSend() {
+  if (busy) { aborter?.abort(); return; }
+  const text = $("input").value.trim();
+  if (!text) return;
+  $("input").value = "";
+  $("input").style.height = "auto";
+
+  history.push({ role: "user", content: text });
+  pendingUsers.push({ text });
+  renderFeed(true);
+
+  const sys = $("sys-prompt").value.trim();
+  const messages = [];
+  if (sys) messages.push({ role: "system", content: sys });
+  messages.push(...history);
+
+  setBusy(true);
+  aborter = new AbortController();
+  liveAiText = "";
+  liveAiDone = false;
+  renderFeed(true);
+
+  let acc = "";
+  try {
+    const headers = { "Content-Type": "application/json" };
+    const key = $("p-key").value.trim();
+    if (key) headers["Authorization"] = "Bearer " + key;
+    const resp = await fetch("/v1/chat/completions", {
+      method: "POST",
+      headers,
+      signal: aborter.signal,
+      body: JSON.stringify({ model: $("p-model").value || "gemini-web", messages, stream: true }),
+    });
+
+    const ct = resp.headers.get("content-type") || "";
+    if (!resp.ok || !ct.includes("event-stream")) {
+      let obj = null;
+      try { obj = await resp.json(); } catch {}
+      throw new Error(obj?.error?.message || obj?.detail || `HTTP ${resp.status}`);
+    }
+
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      let idx;
+      while ((idx = buf.indexOf("\n\n")) >= 0) {
+        const raw = buf.slice(0, idx).trim();
+        buf = buf.slice(idx + 2);
+        if (!raw.startsWith("data:")) continue;
+        const payload = raw.slice(5).trim();
+        if (payload === "[DONE]") continue;
+        let obj;
+        try { obj = JSON.parse(payload); } catch { continue; }
+        if (obj.error) throw new Error(obj.error.message || "上游错误");
+        const delta = obj.choices?.[0]?.delta?.content;
+        if (delta) {
+          acc += delta;
+          liveAiText = acc;
+          renderFeed(true);
+        }
+      }
+    }
+    if (!acc) {
+      liveAiText = "(空回复——请查看服务日志)";
+      renderFeed(true);
+    }
+    history.push({ role: "assistant", content: acc });
+    webSig = null;
+    setTimeout(pollWebFeed, 300);
+  } catch (err) {
+    if (err.name === "AbortError") {
+      toast("已手动停止本轮");
+    } else {
+      liveAiText = "❌ " + err.message;
+      renderFeed(true);
+      setTimeout(() => { if (liveAiText && liveAiText.startsWith("❌")) { liveAiText = null; renderFeed(true); } }, 6000);
+    }
+  } finally {
+    liveAiDone = true;
+    setBusy(false);
+    aborter = null;
+  }
+}
+
+function clearChat() {
+  history = [];
+  pendingUsers = [];
+  liveAiText = null;
+  fetch("/web/new_chat", { method: "POST" })
+    .then(r => r.json())
+    .then(d => {
+      toast(d.ok ? "已清空：网页端已开启新会话" : "已清空本窗口记录（" + (d.error || "") + "）");
+      webSig = null;
+      pollWebFeed();
+    })
+    .catch(() => toast("已清空本窗口记录"));
+}
+
+// ---------- 会话列表（横排常驻） + 自动载入最近会话 ----------
+let curSessionId = "";
+let sessionsCache = [];
+let autoOpened = false;
+
+async function pollSessions() {
+  if (browserStarted === false) return;
+  try {
+    const r = await fetch("/web/sessions");
+    const d = await r.json();
+    curSessionId = d.current || "";
+    sessionsCache = d.sessions || [];
+    renderSessStrip();
+
+    // 页面停在首页（无会话）且时间线为空时，自动载入最近一次会话
+    if (!autoOpened && !curSessionId && sessionsCache.length && !webItems.length) {
+      autoOpened = true;
+      toast("已自动载入最近会话");
+      await openSession(sessionsCache[0].id, true);
+    }
+  } catch {}
+}
+
+function renderSessStrip() {
+  const strip = document.getElementById("sess-strip");
+  if (!sessionsCache.length) {
+    strip.innerHTML = '<span style="color:var(--text-dim);font-size:12.5px">（暂无历史会话）</span>';
+    return;
+  }
+  strip.innerHTML = sessionsCache.map(x => `
+    <div class="sess-chip ${x.id === curSessionId ? "active" : ""}"
+         title="${escapeHtml(x.title || "")}"
+         onclick="openSession('${x.id}')">
+      ${x.id === curSessionId ? "● " : ""}${escapeHtml(x.title || "(未命名)")}
+    </div>`).join("");
+}
+
+async function openSession(id, silent) {
+  try {
+    const r = await fetch("/web/open", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id }),
+    });
+    const d = await r.json();
+    if (d.ok) {
+      if (!silent) toast("已切换到该会话（下一条 agent 消息将重开新会话对齐）");
+      curSessionId = id;
+      webSig = null;
+      renderSig = null;
+      pollWebFeed();
+    } else toast("打开失败：" + (d.error || ""));
+  } catch (e) { toast("打开失败：" + e); }
+}
+setInterval(pollSessions, 5000);
+
+// ---------- 初始化 ----------
+window.addEventListener("pywebviewready", () => { refreshSvcBtn(); loadSettings(); });
+loadSettings();
+setTimeout(() => { if (!window.pywebview) { refreshSvcBtn(); loadSettings(); } }, 600);
+renderFeed(true);
+</script>
+</body>
+</html>
