@@ -22,7 +22,7 @@ from playwright.async_api import Locator, Page
 
 import config
 from cookie_store import collect_seed_cookies
-from flattener import flatten_messages, message_signature
+from flattener import flatten_messages, message_signature, delta_suffix
 
 
 class BridgeError(Exception):
@@ -479,55 +479,69 @@ async def _type_text(page: Page, editor: Locator, text: str, style: str) -> None
 
 _request_lock = asyncio.Lock()
 
-# 镜像同步状态 v2：只跟踪“最后一条用户消息”，天然兼容 agent 动态注入的上下文
-# （AGENTS.md/skill 注入每轮都变也不影响）；网页端保存完整会话，持续同步。
-_last_user_sig: str | None = None   # 已同步进网页端的最后一条用户消息指纹
-_sys_sig: str | None = None         # 主会话 system 指纹（不同 = 旁路调用，如标题生成）
+# 镜像同步状态 v3：只跟踪“最后一条用户消息”；续聊只发增量后缀，
+# 避免 agent 注入头（AGENTS.md/任务记录等，每轮几乎相同）导致网页端
+# 反复出现“第一句话的内容”。
+_last_user_sig: str | None = None
+_last_user_text: str = ""           # 已同步的最后一条用户消息原文（算后缀用）
+_sys_sig: str | None = None         # 主会话 system 指纹（不同 = 旁路调用）
 
 
-def _plan_delta(messages: list[dict]) -> tuple[list[dict], bool, bool]:
+def _text_of(m: dict) -> str:
+    from flattener import _content_to_text
+
+    return _content_to_text(m.get("content"), [])
+
+
+def _plan_delta(messages: list[dict]) -> tuple[list[dict], bool, bool, str]:
     """
-    对账：返回 (本轮要发送的消息, 是否新开会话, 是否旁路调用)。
+    对账：返回 (要发送的消息, 是否新开会话, 是否旁路调用, 建议发送文本)。
 
     - 首条 system 与主会话不同（典型：agent 后台“生成标题”类请求）
       → 旁路调用：在独立临时标签页全新会话，不污染主会话
     - 主会话：
         · 尚未同步过 → 新会话 + 全量
-        · 最后一条用户消息没变 → 无需发送（网页端已是最新）
-        · 它出现在更早位置 → 只发其后的新增用户消息，续聊
-        · 完全找不到（历史被替换）→ 新会话 + 全量
+        · 最后一条用户消息没变 → 无需发送
+        · 有新增用户消息 → 续聊，只发“相对上一条已同步消息的增量后缀”
+        · 上次那条已不在历史里（历史被替换）→ 新会话 + 全量
     """
     users = [(i, m) for i, m in enumerate(messages) if m.get("role") == "user"]
 
     first_sig = message_signature(messages[0])
     isolated = _sys_sig is not None and first_sig != _sys_sig
     if isolated:
-        return messages, True, True
+        return messages, True, True, ""
 
     if not users:
-        return [], False, False
-    last_sig = message_signature(users[-1][1])
+        return [], False, False, ""
+    _, last_msg = users[-1]
+    last_sig = message_signature(last_msg)
 
     if _last_user_sig is None:
-        return messages, True, False
+        return messages, True, False, ""
 
     if last_sig == _last_user_sig:
-        return [], False, False
+        return [], False, False, ""
 
     j = -1
     for i, m in enumerate(messages):
         if m.get("role") == "user" and message_signature(m) == _last_user_sig:
             j = i
     if j < 0:  # 上次同步的那条用户消息已不在历史里：历史被替换，重开
-        return messages, True, False
+        return messages, True, False, ""
 
     delta = [m for m in messages[j + 1:] if m.get("role") == "user"]
-    return delta, False, False
+    if not delta:
+        return [], False, False, ""
+
+    new_text = _text_of(delta[-1])
+    suffix = delta_suffix(_last_user_text, new_text)
+    return delta, False, False, suffix
 
 
 def _commit_sent(messages: list[dict], reply_text: str) -> None:
     """主会话提交成功后更新同步指针。"""
-    global _last_user_sig, _sys_sig
+    global _last_user_sig, _last_user_text, _sys_sig
     if not config.MIRROR_SYNC:
         return
     if _sys_sig is None and messages:
@@ -535,6 +549,7 @@ def _commit_sent(messages: list[dict], reply_text: str) -> None:
     users = [m for m in messages if m.get("role") == "user"]
     if users:
         _last_user_sig = message_signature(users[-1])
+        _last_user_text = _text_of(users[-1])
 
 
 async def _open_and_submit(page: Page, prompt: str, force_new_chat: bool) -> None:
@@ -637,19 +652,19 @@ async def ask(messages: list[dict]) -> str:
     async with _request_lock:
         started = time.time()
 
-        delta, new_chat, isolated = _plan_delta(messages)
+        delta, new_chat, isolated, suffix = _plan_delta(messages)
 
         if not delta:
             context = await get_context()
             page = await _page(context)
             return await latest_response_text(page)
 
-        prompt = flatten_messages(delta)
+        prompt = suffix if (suffix and not new_chat and not isolated) else flatten_messages(delta)
         if len(prompt) > config.MAX_PROMPT_CHARS:
             raise BridgeError(
                 f"本轮需发送 {len(prompt)} 字符，超过上限 {config.MAX_PROMPT_CHARS}，请精简历史。"
             )
-        tag = "旁路调用(独立标签页)" if isolated else ("新开会话" if new_chat else "续聊")
+        tag = "旁路调用(独立标签页)" if isolated else ("新开会话" if new_chat else ("续聊(增量)" if suffix else "续聊"))
         print(f"[gemini2a] 镜像同步：本轮发送 {len(delta)} 条消息（{tag}）")
 
         context = await get_context()
@@ -731,7 +746,7 @@ async def ask_stream(messages: list[dict]):
         async with _request_lock:
             started = time.time()
 
-            delta, new_chat, isolated = _plan_delta(messages)
+            delta, new_chat, isolated, suffix = _plan_delta(messages)
 
             if not delta:
                 context = await get_context()
@@ -741,12 +756,12 @@ async def ask_stream(messages: list[dict]):
                     yield text
                 return
 
-            prompt = flatten_messages(delta)
+            prompt = suffix if (suffix and not new_chat and not isolated) else flatten_messages(delta)
             if len(prompt) > config.MAX_PROMPT_CHARS:
                 raise BridgeError(
                     f"本轮需发送 {len(prompt)} 字符，超过上限 {config.MAX_PROMPT_CHARS}，请精简历史。"
                 )
-            tag = "旁路调用(独立标签页)" if isolated else ("新开会话" if new_chat else "续聊")
+            tag = "旁路调用(独立标签页)" if isolated else ("新开会话" if new_chat else ("续聊(增量)" if suffix else "续聊"))
             print(f"[gemini2a] 镜像同步：本轮发送 {len(delta)} 条消息（{tag}）")
 
             context = await get_context()

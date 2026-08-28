@@ -32,9 +32,51 @@ def _content_to_text(content, dropped_images: list) -> str:
 
 
 def message_signature(message: dict) -> str:
-    """消息指纹：用于网页端镜像同步时判断哪些消息是新增的。"""
+    """消息指纹：全量 sha1，杜绝“前200字相同”导致的定位错乱。"""
+    import hashlib
+
     role = message.get("role", "user")
-    return f"{role}|{len(_content_to_text(message.get('content'), []))}|{_content_to_text(message.get('content'), [])[:200]}"
+    body = _content_to_text(message.get("content"), [])
+    return f"{role}|{len(body)}|{hashlib.sha1(body.encode('utf-8')).hexdigest()[:16]}"
+
+
+def common_prefix_len(a: str, b: str, limit: int = 200_000) -> int:
+    """两段文本的最长公共前缀长度（截断保护）。"""
+    n = min(len(a), len(b), limit)
+    if a[:n] == b[:n]:
+        return n
+    lo, hi = 0, n
+    while lo < hi:
+        mid = (lo + hi + 1) // 2
+        if a[:mid] == b[:mid]:
+            lo = mid
+        else:
+            hi = mid - 1
+    return lo
+
+
+def delta_suffix(prev_text: str, new_text: str) -> str:
+    """
+    agent 消息通常是“注入头 + 新指令”，且各轮注入头基本相同。
+    返回 new_text 相对 prev_text 的真实增量后缀；无增量时返回原文
+    （防重复提交由同步层保证，这里不做二次判断）。
+    """
+    if prev_text and new_text.startswith(prev_text):
+        suffix = new_text[len(prev_text):]
+        return suffix if suffix.strip() else new_text
+    # 前缀不同：尝试“旧消息尾部 == 新消息开头”的重叠（agent 重排上下文时）
+    if prev_text:
+        overlap = min(len(prev_text), len(new_text), 50_000)
+        best = 0
+        for k in range(overlap, 0, -1):
+            if prev_text.endswith(new_text[:k]):
+                best = k
+                break
+        if best and new_text[best:].strip():
+            return new_text[best:]
+        if best:
+            return ""
+    return new_text
 
 
 def flatten_messages(messages: list) -> str:
